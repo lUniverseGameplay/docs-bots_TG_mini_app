@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, errorText, post } from "./api";
+import { Orb, Icon } from "./UI";
 import { Answer } from "./Markdown";
 import { SupportPanel, SupportInbox } from "./Support";
 import { useResource } from "./useResource";
@@ -29,7 +30,9 @@ function restoreRequest(key: string) {
 export function Chat({
   me,
   onTicket,
+  visible = true,
 }: {
+  visible?: boolean;
   me: Me;
   onTicket: (id: string) => void;
 }) {
@@ -56,26 +59,19 @@ export function Chat({
     (value) => !value.outcome || value.support?.state === "creating",
   );
   useEffect(() => {
-    if (question.value)
-      setEntries((previous) => {
-        const index = previous.findIndex(
-          (item) => item.request_id === question.value!.request_id,
-        );
-        if (index < 0) return [...previous, question.value!];
-        return previous.map((item, i) =>
-          i === index ? question.value! : item,
-        );
-      });
-  }, [question.value]);
+    if (question.value?.request_id === current) setEntries([question.value]);
+  }, [question.value, current]);
   const active = Boolean(
-    current && (!question.value || !question.value.outcome),
+    current &&
+    (question.value?.request_id !== current || !question.value?.outcome),
   );
   const submit = async () => {
-    if (sending) return;
+    if (sending || (!pending && active)) return;
     const draft = pending ?? { key: crypto.randomUUID(), text: text.trim() };
     if (!draft.text) return;
     setPending(draft);
     write(prefix + ":pending", draft);
+    setEntries([]);
     setSending(true);
     setError(undefined);
     try {
@@ -128,20 +124,51 @@ export function Chat({
     }
   }
   return (
-    <section aria-label="Чат с помощником">
-      <h1>Помощник по документации</h1>
-      <p className="muted">
-        Каждый вопрос рассматривается отдельно, без контекста прошлых сообщений.
-      </p>
+    <section className="chat-page" aria-label="Чат с помощником">
+      <div className="section-eyebrow">
+        <span className="live-dot" /> ПОМОЩНИК ПО ДОКУМЕНТАЦИИ
+      </div>
       {!me.admitted && (
         <p role="alert">
           Новые вопросы недоступны. Попросите администратора разрешить ваш
-          Telegram username. Принятый ранее результат и собственные тикеты
+          Telegram username. Принятый ранее результат и собственные обращения
           остаются доступны.
         </p>
       )}
-      {entries.length === 0 && !current && (
-        <p>Задайте вопрос по документации.</p>
+      {entries.length === 0 && !current && !pending && !sending && (
+        <div className="welcome">
+          <div className="welcome-orb">
+            <Orb />
+          </div>
+          <span className="eyebrow">BARS ASSISTANT</span>
+          <h1>Привет! Чем помочь?</h1>
+          <p>
+            Задайте вопрос по документации — я помогу найти ответ.
+          </p>
+          <div className="welcome-note">
+            <Icon name="layers" />
+            <span>
+              Найдите нужное.
+              <br />
+              <strong>Разберитесь в деталях.</strong>
+            </span>
+          </div>
+        </div>
+      )}
+      {(sending || (pending && !entries.length)) && (
+        <div className="exchange">
+          <div className="user-message">
+            <span className="label">Вы</span>
+            <p>{pending?.text}</p>
+          </div>
+          {sending && (
+            <div className="bot-message">
+              <p className="thinking" role="status">
+                <Orb waiting /> Отправляем вопрос…
+              </p>
+            </div>
+          )}
+        </div>
       )}
       <div className="conversation" aria-live="polite">
         {entries.map((entry) => (
@@ -151,15 +178,18 @@ export function Chat({
               <p>{entry.text}</p>
             </div>
             <div className="bot-message">
-              <span className="label">Помощник</span>
-              {!entry.outcome ? (
-                <p role="status">
+              <span className="label assistant-label">
+                <Orb /> BARS Assistant
+              </span>
+              {!entry.outcome && !question.error ? (
+                <p role="status" className="thinking">
+                  <Orb waiting />
                   Обрабатываем вопрос… Можно закрыть приложение и вернуться
                   позже.
                 </p>
-              ) : entry.outcome.kind === "answered" ? (
-                <Answer result={entry.outcome.result} />
-              ) : entry.outcome.kind === "notice" ? (
+              ) : entry.outcome?.kind === "answered" ? (
+                <Answer result={entry.outcome.result} animate={visible} />
+              ) : entry.outcome?.kind === "notice" ? (
                 <p
                   role={
                     entry.outcome.code === "technical_error"
@@ -169,12 +199,12 @@ export function Chat({
                 >
                   {entry.outcome.text}
                 </p>
-              ) : (
+              ) : entry.outcome ? (
                 <p>
                   В документации не найден подтверждённый ответ. Обращение
                   передано в поддержку.
                 </p>
-              )}
+              ) : null}
               {entry.support ? (
                 <SupportPanel
                   initial={entry.support}
@@ -190,7 +220,7 @@ export function Chat({
                         void startSupport(entry.request_id, "dissatisfied")
                       }
                     >
-                      Ответ не помог
+                      <Icon name="chat" /> Ответ не помог
                     </button>
                     <button
                       disabled={supportBusy === entry.request_id}
@@ -198,7 +228,7 @@ export function Chat({
                         void startSupport(entry.request_id, "human_request")
                       }
                     >
-                      Нужна помощь человека
+                      <Icon name="headset" /> Позвать оператора
                     </button>
                   </div>
                 )
@@ -234,13 +264,17 @@ export function Chat({
           создаст второй вопрос.
         </p>
       )}
+      <SupportInbox onTicket={onTicket} />
       <form
+        className="composer question-composer"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        <label htmlFor="question">Ваш вопрос</label>
+        <label className="sr-only" htmlFor="question">
+          Ваш вопрос
+        </label>
         <textarea
           id="question"
           value={text}
@@ -250,14 +284,20 @@ export function Chat({
             sending || Boolean(pending) || (!pending && active) || !me.admitted
           }
           onChange={(event) => setText(event.target.value)}
-          placeholder="Как выполнить…"
+          rows={2}
+          placeholder="Задайте вопрос…"
         />
         <div className="actions">
-          <button type="button" disabled aria-describedby="upload-note">
-            Прикрепить изображение · скоро
-          </button>
           <button
             type="submit"
+            className="primary send-button"
+            aria-label={
+              sending
+                ? "Отправляем…"
+                : pending
+                  ? "Повторить отправку"
+                  : "Отправить"
+            }
             disabled={
               sending ||
               (!pending && active) ||
@@ -265,20 +305,18 @@ export function Chat({
               (!pending && !text.trim())
             }
           >
-            {sending
-              ? "Отправляем…"
-              : pending
-                ? "Повторить отправку"
-                : "Отправить"}
+            <Icon name="send" />
+            <span className="sr-only">
+              {sending
+                ? "Отправляем…"
+                : pending
+                  ? "Повторить отправку"
+                  : "Отправить"}
+            </span>
           </button>
         </div>
-        <small id="upload-note">
-          Сейчас принимаются только текстовые вопросы. Изображения не выбираются
-          и не отправляются.
-        </small>
         {Boolean(error) && <p role="alert">{errorText(error)}</p>}
       </form>
-      <SupportInbox onTicket={onTicket} />
     </section>
   );
 }

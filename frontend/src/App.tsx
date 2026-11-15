@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useResource } from "./useResource";
 import { errorText } from "./api";
+import { Icon } from "./UI";
 import { Chat } from "./Chat";
 import { Tickets } from "./Tickets";
 import { Users, Metrics } from "./Admin";
@@ -21,26 +22,47 @@ export default function App() {
   useEffect(() => {
     const telegram = window.Telegram?.WebApp;
     if (!telegram) return;
-    const theme = () => {
-      document.documentElement.dataset.theme = telegram.colorScheme;
-      for (const [key, value] of Object.entries(telegram.themeParams)) {
-        if (/^#[0-9a-fA-F]{6}$/.test(value))
-          document.documentElement.style.setProperty(
-            "--tg-" + key.replaceAll("_", "-"),
-            value,
-          );
+    const viewport = () => {
+      const sdk = telegram as unknown as {
+        viewportHeight?: number;
+        safeAreaInset?: { top: number; bottom: number };
+        contentSafeAreaInset?: { top: number; bottom: number };
+      };
+      for (const edge of ["top", "bottom"] as const) {
+        document.documentElement.style.setProperty(
+          "--tg-content-safe-area-inset-" + edge,
+          (sdk.safeAreaInset?.[edge] ?? 0) +
+            (sdk.contentSafeAreaInset?.[edge] ?? 0) +
+            "px",
+        );
       }
+      const height = Math.min(
+        window.visualViewport?.height ?? window.innerHeight,
+        sdk.viewportHeight || window.innerHeight,
+      );
+      document.documentElement.style.setProperty("--app-height", height + "px");
     };
-    theme();
+    viewport();
     telegram.ready();
     telegram.expand();
-    telegram.onEvent("themeChanged", theme);
-    return () => telegram.offEvent("themeChanged", theme);
+    telegram.onEvent("viewportChanged", viewport);
+    telegram.onEvent("safeAreaChanged", viewport);
+    telegram.onEvent("contentSafeAreaChanged", viewport);
+    window.addEventListener("resize", viewport);
+    window.visualViewport?.addEventListener("resize", viewport);
+    return () => {
+      telegram.offEvent("viewportChanged", viewport);
+      telegram.offEvent("safeAreaChanged", viewport);
+      telegram.offEvent("contentSafeAreaChanged", viewport);
+      window.removeEventListener("resize", viewport);
+      window.visualViewport?.removeEventListener("resize", viewport);
+    };
   }, []);
   if (!user.value)
     return (
-      <main>
-        <h1>Помощник по документации</h1>
+      <main className="auth-state">
+        <span className="brand-mark" />
+        <h1>BARS Assistant</h1>
         {user.error ? (
           <>
             <p role="alert">{errorText(user.error)}</p>
@@ -59,35 +81,58 @@ export default function App() {
   };
   return (
     <>
-      <header>
-        <span>@{me.username ?? "без username"}</span>
-        <span>{admin ? "Администратор" : "Пользователь"}</span>
-        <button onClick={user.reload}>Обновить доступ</button>
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark" />
+          <div>
+            <strong>BARS Assistant</strong>
+            <span>Ответы по документации</span>
+          </div>
+        </div>
+        <div className="account">
+          <span>
+            @{me.username ?? "без username"}
+            <small>{admin ? "Администратор" : "Пользователь"}</small>
+          </span>
+          <button
+            className="icon-button"
+            aria-label="Обновить доступ"
+            onClick={user.reload}
+          >
+            <Icon name="refresh" />
+          </button>
+        </div>
       </header>
-      <nav aria-label="Разделы приложения">
+      <nav className="app-nav" aria-label="Разделы приложения">
         {[
-          ["chat", "Чат"],
-          ["tickets", "Мои тикеты"],
+          ["chat", "Чат-бот", "chat"],
+          ["tickets", "Мои обращения", "tickets"],
           ...(admin
             ? [
-                ["allTickets", "Все тикеты"],
-                ["users", "Допуск"],
-                ["metrics", "Метрики"],
+                ["allTickets", "Очередь обращений", "headset"],
+                ["users", "Допуски", "users"],
+                ["metrics", "Метрики", "chart"],
               ]
             : []),
-        ].map(([key, label]) => (
+        ].map(([key, label, icon]) => (
           <button
             aria-current={tab === key ? "page" : undefined}
             key={key}
             onClick={() => setTab(key)}
           >
-            {label}
+            <Icon name={icon} />
+            <span>{label}</span>
           </button>
         ))}
       </nav>
-      <main>
+      <main className={tab === "allTickets" ? "app-main wide" : "app-main"}>
         <div hidden={tab !== "chat"}>
-          <Chat key={me.user_id} me={me} onTicket={openTicket} />
+          <Chat
+            key={me.user_id}
+            visible={tab === "chat"}
+            me={me}
+            onTicket={openTicket}
+          />
         </div>
         {tab === "tickets" && (
           <Tickets userId={me.user_id} selected={ticket} onSelect={setTicket} />

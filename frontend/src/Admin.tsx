@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Icon, PageHeading } from "./UI";
 import { api, errorText } from "./api";
 import { useResource } from "./useResource";
 import type { Page } from "./types";
@@ -15,8 +16,19 @@ export function Users({ onAccessChanged }: { onAccessChanged?: () => void }) {
     [enabled, setEnabled] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<unknown>(),
-    [success, setSuccess] = useState("");
+    [success, setSuccess] = useState(""),
+    [search, setSearch] = useState("");
+  const items = [...(resource.value?.items ?? []), ...older].filter(
+    (item, index, all) =>
+      all.findIndex((other) => other.username === item.username) === index,
+  );
   async function save(name: string, allowed: boolean) {
+    if (
+      busy ||
+      (!allowed &&
+        !window.confirm("Отозвать доступ @" + name.replace(/^@/, "") + "?"))
+    )
+      return;
     setBusy(true);
     setError(undefined);
     setSuccess("");
@@ -54,21 +66,26 @@ export function Users({ onAccessChanged }: { onAccessChanged?: () => void }) {
     }
   }
   return (
-    <section>
-      <h1>Допуск пользователей</h1>
-      <p>
-        Допуск по username разрешает вопросы. Администраторы назначаются
-        отдельно по Telegram ID в конфигурации сервера.
-      </p>
+    <section className="access-page">
+      <PageHeading
+        title="Допуски"
+        description="Управление доступом к помощнику"
+        icon="users"
+      />
+      <p>Допуск разрешает пользователю задавать вопросы по документации.</p>
       <form
+        className="access-form card"
         onSubmit={(event) => {
           event.preventDefault();
           void save(username, enabled);
         }}
       >
+        <h2>Выдать доступ пользователю</h2>
         <label htmlFor="access-username">Telegram username</label>
         <input
           id="access-username"
+          placeholder="@username"
+          disabled={busy}
           pattern="@?[A-Za-z0-9_]{1,32}"
           maxLength={33}
           required
@@ -78,12 +95,15 @@ export function Users({ onAccessChanged }: { onAccessChanged?: () => void }) {
         <label className="checkbox">
           <input
             type="checkbox"
+            disabled={busy}
             checked={enabled}
             onChange={(event) => setEnabled(event.target.checked)}
           />
           Допуск разрешён
         </label>
-        <button disabled={busy}>Сохранить допуск</button>
+        <button className="primary" disabled={busy}>
+          {busy ? "Сохраняем…" : enabled ? "Выдать доступ" : "Отозвать доступ"}
+        </button>
       </form>
       {success && <p role="status">{success}</p>}
       {Boolean(error || resource.error) && (
@@ -93,20 +113,62 @@ export function Users({ onAccessChanged }: { onAccessChanged?: () => void }) {
         </p>
       )}
       {resource.loading && <p role="status">Загрузка…</p>}
-      <ul className="ticket-list">
-        {[...(resource.value?.items ?? []), ...older].map((item) => (
-          <li key={item.username}>
-            <strong>@{item.username}</strong> ·{" "}
-            {item.enabled ? "Разрешён" : "Отключён"}{" "}
-            <button
-              disabled={busy}
-              onClick={() => void save(item.username, !item.enabled)}
-            >
-              {item.enabled ? "Отключить" : "Разрешить"}
-            </button>
-          </li>
-        ))}
+      <div className="access-summary">
+        <span>
+          <Icon name="users" /> Загружено: <strong>{items.length}</strong>
+        </span>
+        <span>
+          <span className="live-dot" /> С доступом:{" "}
+          <strong>{items.filter((item) => item.enabled).length}</strong>
+        </span>
+      </div>
+      <label className="search-field">
+        <Icon name="search" />
+        <input
+          aria-label="Поиск по username"
+          placeholder="Поиск по username…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
+      <ul className="access-list">
+        {items
+          .filter((item) =>
+            item.username
+              .toLowerCase()
+              .includes(search.replace(/^@/, "").toLowerCase()),
+          )
+          .map((item) => (
+            <li key={item.username}>
+              <span className="access-avatar">
+                <Icon name="users" />
+              </span>
+              <div>
+                <strong>@{item.username}</strong>
+                <small className={item.enabled ? "access-enabled" : "muted"}>
+                  {item.enabled ? "Доступ разрешён" : "Доступ отключён"}
+                </small>
+              </div>
+              <button
+                disabled={busy}
+                onClick={() => void save(item.username, !item.enabled)}
+              >
+                <Icon name={item.enabled ? "trash" : "check"} />
+                {item.enabled ? "Отозвать" : "Разрешить"}
+              </button>
+            </li>
+          ))}
       </ul>
+      {search &&
+        !items.some((item) =>
+          item.username
+            .toLowerCase()
+            .includes(search.replace(/^@/, "").toLowerCase()),
+        ) && (
+          <p className="empty-state">
+            По вашему запросу ничего не найдено среди загруженных пользователей.
+          </p>
+        )}
       {resource.value?.items.length === 0 && <p>Список допуска пуст.</p>}
       {(cursor === undefined ? resource.value?.next_cursor : cursor) && (
         <button disabled={busy} onClick={() => void more()}>
@@ -231,7 +293,10 @@ export function Metrics() {
             name="Подтверждённая доставка ответа Telegram"
             values={data.reply_duration_ms}
           />
-          <Durations name="Закрытие тикета" values={data.ticket_duration_ms} />
+          <Durations
+            name="Закрытие обращения"
+            values={data.ticket_duration_ms}
+          />
           {data.topics ? (
             <ul>
               {Object.entries(data.topics).map(([topic, count]) => (

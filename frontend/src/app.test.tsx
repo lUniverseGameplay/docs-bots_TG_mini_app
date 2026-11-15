@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
+import { Tickets } from "./Tickets";
+import { Users } from "./Admin";
 import App from "./App";
 import { Chat } from "./Chat";
-import { Answer, Markdown } from "./Markdown";
+import { Answer, Markdown, MarkdownReveal } from "./Markdown";
 import { SupportPanel, SupportInbox } from "./Support";
 import type { Me, Question, SupportCase } from "./types";
 
@@ -198,17 +201,11 @@ describe("roles, text chat and request recovery", () => {
       }),
     );
     render(<App />);
-    await screen.findByRole("heading", { name: "Помощник по документации" });
+    await screen.findByRole("heading", { name: "Привет! Чем помочь?" });
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Допуск" })).toBeNull(),
+      expect(screen.queryByRole("button", { name: "Допуски" })).toBeNull(),
     );
-    expect(
-      (
-        screen.getByRole("button", {
-          name: "Прикрепить изображение · скоро",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
+    expect(screen.queryByRole("button", { name: /Прикрепить/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Ваш вопрос"), {
       target: { value: "How?" },
     });
@@ -259,11 +256,15 @@ describe("roles, text chat and request recovery", () => {
   it("does not expose admin navigation to users but includes all panels for admins", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => json({ ...me, role: "admin", admitted: false })),
+      vi.fn(async (path: string) =>
+        path.endsWith("/me")
+          ? json({ ...me, role: "admin", admitted: false })
+          : json({ items: [], next_cursor: null }),
+      ),
     );
     render(<App />);
-    await screen.findByRole("button", { name: "Все тикеты" });
-    expect(screen.getByRole("button", { name: "Допуск" })).toBeDefined();
+    await screen.findByRole("button", { name: "Очередь обращений" });
+    expect(screen.getByRole("button", { name: "Допуски" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Метрики" })).toBeDefined();
     expect(
       (screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement)
@@ -312,7 +313,7 @@ describe("support and ticket chat", () => {
       await screen.findByRole("button", { name: "Помощь всё ещё нужна" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Открыть тикет" }),
+      await screen.findByRole("button", { name: "Открыть обращение" }),
     );
     expect(open).toHaveBeenCalledWith(support.case_id);
   });
@@ -362,9 +363,13 @@ describe("support and ticket chat", () => {
       }),
     );
     render(<App />);
-    await screen.findByRole("heading", { name: "Помощник по документации" });
-    fireEvent.click(await screen.findByRole("button", { name: "Мои тикеты" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Тикет №17/ }));
+    await screen.findByRole("heading", { name: "Привет! Чем помочь?" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Мои обращения" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Обращение №17/ }),
+    );
     await screen.findByLabelText("Сообщение");
     fireEvent.change(screen.getByLabelText("Сообщение"), {
       target: { value: "Details" },
@@ -399,5 +404,213 @@ describe("support and ticket chat", () => {
     expect(
       await screen.findByRole("button", { name: "Помощь всё ещё нужна" }),
     ).toBeDefined();
+  });
+});
+
+describe("redesign interactions", () => {
+  it("reveals complete Markdown blocks and lets the reader skip", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    const { container } = render(
+      <MarkdownReveal
+        text={"# Title\n\n**Complete bold**\n\n| A | B |\n| - | - |\n| 1 | 2 |"}
+      />,
+    );
+    expect(container.querySelector("strong")?.textContent).toBe(
+      "Complete bold",
+    );
+    expect(
+      (container.querySelector("table") as HTMLElement).style.visibility,
+    ).toBe("hidden");
+    fireEvent.click(screen.getByRole("button", { name: "Показать сразу" }));
+    expect(
+      (container.querySelector("table") as HTMLElement).style.visibility,
+    ).toBe("visible");
+    expect(screen.queryByRole("button", { name: "Показать сразу" })).toBeNull();
+  });
+  it("shows the full answer for reduced motion", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: true })),
+    );
+    const { container } = render(
+      <MarkdownReveal text={"# Title\n\nSecond block"} />,
+    );
+    expect(
+      (container.querySelector(".markdown p [data-reveal-unit]") as HTMLElement)
+        .style.visibility,
+    ).toBe("visible");
+    expect(screen.queryByRole("button", { name: "Показать сразу" })).toBeNull();
+  });
+  it("removes the previous pair as soon as a new question is submitted", async () => {
+    let request = 17;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, options: RequestInit = {}) => {
+        if (path === "/api/v1/questions" && options.method === "POST")
+          return json({ request_id: ++request }, 202);
+        if (path.endsWith("/questions/17")) return json(question);
+        if (path.endsWith("/questions/18"))
+          return json({
+            ...question,
+            request_id: 18,
+            text: "Next question",
+            outcome: null,
+          });
+        return json({ items: [], next_cursor: null });
+      }),
+    );
+    render(<Chat me={{ ...me, active_request_id: 17 }} onTicket={vi.fn()} />);
+    await screen.findByRole("heading", { name: "Answer" });
+    fireEvent.change(screen.getByLabelText("Ваш вопрос"), {
+      target: { value: "Next question" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    expect(screen.queryByRole("heading", { name: "Answer" })).toBeNull();
+    await screen.findByText("Next question");
+    expect(screen.queryByText("How?")).toBeNull();
+  });
+});
+
+describe("appeal filters and access actions", () => {
+  it("filters loaded appeals by real API states", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({
+          items: [
+            { ...support, state: "open" },
+            {
+              ...support,
+              case_id: "closed-case",
+              request_id: 18,
+              state: "closed",
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+    render(<Tickets userId={7} selected={null} onSelect={vi.fn()} />);
+    await screen.findByRole("button", { name: /Обращение №17/ });
+    fireEvent.click(screen.getByRole("button", { name: /Закрытые/ }));
+    expect(screen.queryByRole("button", { name: /Обращение №17/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Обращение №18/ })).toBeDefined();
+  });
+  it("does not revoke access when confirmation is cancelled", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetcher = vi.fn(async () =>
+      json({
+        items: [{ username: "alice", enabled: true }],
+        next_cursor: null,
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<Users />);
+    fireEvent.click(await screen.findByRole("button", { name: "Отозвать" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    confirm.mockRestore();
+  });
+  it("shows a forbidden error with retry instead of an empty screen", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ detail: "forbidden" }, 403)),
+    );
+    render(<Tickets userId={7} admin selected={null} onSelect={vi.fn()} />);
+    expect((await screen.findByRole("alert")).textContent).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Обновить" })).toBeDefined();
+  });
+});
+
+describe("image failure recovery", () => {
+  it("shows an error, retries the protected image and closes zoom with Escape", async () => {
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = vi.fn(() => "blob:retried-image");
+        static revokeObjectURL = vi.fn();
+      },
+    );
+    let attempts = 0;
+    const fetcher = vi.fn(async () =>
+      ++attempts === 1
+        ? new Response("failure", { status: 503 })
+        : new Response(new Uint8Array([1, 2]), {
+            headers: { "Content-Type": "image/png" },
+          }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(
+      <Answer
+        result={{
+          answer_text: "**Answer**",
+          images: [{ image_id: imageId, description: "Retry diagram" }],
+          sources: [],
+        }}
+      />,
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Не удалось загрузить изображение",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Повторить загрузку изображения" }),
+    );
+    await screen.findByRole("img", { name: "Retry diagram" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Увеличить: Retry diagram" }),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("smooth bounded reveal", () => {
+  it("reveals phrases without collapsing layout and finishes within 4.5 seconds", () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn(() => ({
+          matches: false,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        })),
+      );
+      const { container } = render(
+        <MarkdownReveal
+          text={
+            "# Heading\n\nFirst second third fourth fifth sixth **bold words** [safe link](https://example.org)\n\n```js\nconst a = 1;\n```"
+          }
+        />,
+      );
+      expect(container.querySelector(".reveal-cursor")?.tagName).toBe("H1");
+      expect(
+        (container.querySelector("pre") as HTMLElement).style.visibility,
+      ).toBe("hidden");
+      expect((container.querySelector("pre") as HTMLElement).hidden).toBe(
+        false,
+      );
+      act(() => vi.advanceTimersByTime(180));
+      expect(container.querySelector(".reveal-cursor")?.textContent).toBe(
+        "First second third ",
+      );
+      expect(container.querySelector("strong")?.textContent).toBe("bold words");
+      act(() => vi.advanceTimersByTime(4500));
+      expect(container.querySelector(".reveal-cursor")).toBeNull();
+      expect(
+        (container.querySelector("pre") as HTMLElement).style.visibility,
+      ).toBe("visible");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

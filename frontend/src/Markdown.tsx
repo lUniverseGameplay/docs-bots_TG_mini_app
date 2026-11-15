@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
 import type { Root, Text } from "mdast";
+import type { Root as HtmlRoot, Element as HtmlElement } from "hast";
 import type { ImageRef, RagResult } from "./types";
+import { Orb } from "./UI";
 import { imageBlob } from "./api";
 
 export function galleryMarkers(images: ImageRef[]) {
@@ -44,18 +46,52 @@ export function galleryMarkers(images: ImageRef[]) {
     });
   };
 }
+// Build reveal units from the parsed HTML tree, never from partial Markdown.
+function revealUnits() {
+  return (tree: HtmlRoot) => {
+    const mark = (element: HtmlElement) => {
+      element.properties = { ...element.properties, "data-reveal-unit": "" };
+    };
+    for (const block of tree.children) {
+      if (block.type !== "element") continue;
+      if (block.tagName === "p") {
+        block.children = block.children.flatMap<
+          HtmlElement["children"][number]
+        >((child) => {
+          if (child.type === "text")
+            return (child.value.match(/(?:\S+\s*){1,3}|\s+/g) ?? []).map(
+              (value) => ({
+                type: "element" as const,
+                tagName: "span",
+                properties: { "data-reveal-unit": "" },
+                children: [{ type: "text" as const, value }],
+              }),
+            );
+          if (child.type === "element") mark(child);
+          return [child];
+        });
+      } else if (block.tagName === "ul" || block.tagName === "ol") {
+        for (const child of block.children)
+          if (child.type === "element") mark(child);
+      } else mark(block);
+    }
+  };
+}
 export function Markdown({
   text,
   images = [],
+  reveal = false,
 }: {
   text: string;
   images?: ImageRef[];
+  reveal?: boolean;
 }) {
   return (
     <div className="markdown">
       <ReactMarkdown
         skipHtml
         remarkPlugins={[remarkGfm, galleryMarkers(images)]}
+        rehypePlugins={reveal ? [revealUnits] : []}
         components={{
           a: ({ children, href }) => (
             <a href={href} target="_blank" rel="noopener noreferrer">
@@ -104,9 +140,14 @@ function GalleryImage({ image }: { image: ImageRef }) {
           <img src={url} alt={image.description} />
         </button>
       ) : failed ? (
-        <button onClick={() => setRetry((n) => n + 1)}>
-          Повторить загрузку изображения
-        </button>
+        <div>
+          <p role="alert">
+            Не удалось загрузить изображение «{image.description}».
+          </p>
+          <button onClick={() => setRetry((n) => n + 1)}>
+            Повторить загрузку изображения
+          </button>
+        </div>
       ) : (
         <p role="status">Загрузка изображения…</p>
       )}
@@ -130,10 +171,118 @@ function GalleryImage({ image }: { image: ImageRef }) {
     </figure>
   );
 }
-export function Answer({ result }: { result: RagResult }) {
+// Reveal parsed phrases with stable layout; Markdown syntax is never sliced.
+export function MarkdownReveal({
+  text,
+  images = [],
+  animate = true,
+}: {
+  text: string;
+  images?: ImageRef[];
+  animate?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const revealed = useRef<string | null>(null);
+  const [active, setActive] = useState(false);
+  const finish = useRef<() => void>(() => {});
+  useLayoutEffect(() => {
+    const nodes = Array.from(
+      ref.current?.querySelectorAll("[data-reveal-unit]") ?? [],
+    ) as HTMLElement[];
+    const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    let timer: ReturnType<typeof setTimeout>;
+    let deadline: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    const showAll = () => {
+      cancelled = true;
+      clearTimeout(timer);
+      clearTimeout(deadline);
+      nodes.forEach((node) => {
+        node.style.visibility = "visible";
+        node.style.opacity = "1";
+        node.classList.remove("reveal-cursor");
+      });
+      revealed.current = text;
+      setActive(false);
+    };
+    finish.current = showAll;
+    if (
+      !animate ||
+      motion?.matches ||
+      nodes.length < 2 ||
+      revealed.current === text
+    ) {
+      showAll();
+      return;
+    }
+    setActive(true);
+    nodes.forEach((node, index) => {
+      node.style.visibility = index > 0 ? "hidden" : "visible";
+      node.style.opacity = index > 0 ? "0" : "1";
+    });
+    nodes[0]?.classList.add("reveal-cursor");
+    let index = 1;
+    const step = () => {
+      if (cancelled) return;
+      if (index >= nodes.length) {
+        showAll();
+        return;
+      }
+      nodes[index - 1]?.classList.remove("reveal-cursor");
+      const node = nodes[index++];
+      node.style.visibility = "visible";
+      node.style.opacity = "1";
+      node.classList.add("reveal-cursor");
+      // Overlapping phrase fades keep layout stable and finish in about 4s.
+      const delay = Math.min(120, 3500 / nodes.length);
+      timer = setTimeout(step, delay);
+    };
+    timer = setTimeout(step, 180);
+    // Readers can always skip; very long answers finish within 4.5 seconds.
+    deadline = setTimeout(showAll, 4500);
+    motion?.addEventListener?.("change", showAll);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      clearTimeout(deadline);
+      nodes.forEach((node) => {
+        node.style.visibility = "visible";
+        node.style.opacity = "1";
+        node.classList.remove("reveal-cursor");
+      });
+      motion?.removeEventListener?.("change", showAll);
+    };
+  }, [text, animate]);
+  return (
+    <div ref={ref} className={active ? "reveal reveal-active" : "reveal"}>
+      <Markdown text={text} images={images} reveal />
+      {!active && animate && (
+        <span className="completion-orb">
+          <Orb />
+        </span>
+      )}
+      {active && (
+        <div className="reveal-controls">
+          <button onClick={() => finish.current()}>Показать сразу</button>
+        </div>
+      )}
+    </div>
+  );
+}
+export function Answer({
+  result,
+  animate = false,
+}: {
+  result: RagResult;
+  animate?: boolean;
+}) {
   return (
     <>
-      <Markdown text={result.answer_text} images={result.images} />
+      <MarkdownReveal
+        text={result.answer_text}
+        images={result.images}
+        animate={animate}
+      />
       {result.images.length > 0 && (
         <div className="gallery" aria-label="Изображения к ответу">
           {result.images.map((image) => (

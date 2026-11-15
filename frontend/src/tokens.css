@@ -1,0 +1,57 @@
+:root {
+  --font-family:
+    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: 24px;
+  --font-body: 15px;
+  --font-button: 13px;
+  --font-caption: 12px;
+  --brand-navy: #141e49;
+  --brand-navy-light: #25345a;
+  --brand-green: #20c83a;
+  --brand-green-hover: #16ac2f;
+  --brand-lime: #a4db3b;
+  --brand-sky: #6bc5ea;
+  --background: #f3f5f9;
+  --surface: #ffffff;
+  --surface-muted: #f7f9fc;
+  --text-primary: #17233d;
+  --text-secondary: #596581;
+  --text-inverse: #ffffff;
+  --border: #dce3ef;
+  --border-strong: #bcc8da;
+  --success: #148d39;
+  --success-bg: #e5f8e9;
+  --info: #276ac9;
+  --info-bg: #e8f1ff;
+  --warning: #a36a0a;
+  --warning-bg: #fff5db;
+  --error: #c63838;
+  --error-bg: #fdecec;
+  --inactive: #78849a;
+  --inactive-bg: #edf0f5;
+  --header-muted: #bac7df;
+  --header-line: #405071;
+  --orb-core: #cdffc6;
+  --orb-halo: #20c83a33;
+  --overlay: #10172eee;
+  --radius-card: 16px;
+  --radius-small: 12px;
+  --radius-input: 14px;
+  --radius-button: 12px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --touch: 44px;
+  --shadow-card: 0 2px 6px #141e4905;
+  --safe-top: max(
+    env(safe-area-inset-top, 0px),
+    var(--tg-content-safe-area-inset-top, 0px)
+  );
+  --safe-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--tg-content-safe-area-inset-bottom, 0px)
+  );
+}

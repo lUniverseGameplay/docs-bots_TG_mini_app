@@ -6,9 +6,9 @@ import type { Page, SupportCase } from "./types";
 export const stateLabels: Record<SupportCase["state"], string> = {
   waiting: "Ожидание самостоятельного решения",
   awaiting_confirmation: "Нужно подтверждение",
-  creating: "Создаём тикет",
-  open: "Открыт",
-  closed: "Закрыт",
+  creating: "Создаём обращение",
+  open: "Открыто",
+  closed: "Закрыто",
   cancelled: "Обращение отменено",
 };
 export function SupportPanel({
@@ -67,7 +67,9 @@ export function SupportPanel({
         </div>
       )}
       {["open", "closed"].includes(current.state) && (
-        <button onClick={() => onTicket(current.case_id)}>Открыть тикет</button>
+        <button onClick={() => onTicket(current.case_id)}>
+          Открыть обращение
+        </button>
       )}
       {Boolean(error || resource.error) && (
         <p role="alert">

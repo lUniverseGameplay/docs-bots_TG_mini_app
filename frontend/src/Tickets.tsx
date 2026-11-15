@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorText, post } from "./api";
+import { Icon, PageHeading, StatusBadge } from "./UI";
 import { Markdown } from "./Markdown";
-import { stateLabels } from "./Support";
 import { useResource } from "./useResource";
 import { read, write } from "./storage";
 import type { Page, SupportCase, TicketView } from "./types";
@@ -17,8 +17,12 @@ export function Tickets({
   selected: string | null;
   onSelect: (id: string | null) => void;
 }) {
+  const [filter, setFilter] = useState("all");
   const base = admin ? "/admin/tickets" : "/tickets";
-  const list = useResource<Page<SupportCase>>(selected ? null : base);
+  const list = useResource<Page<SupportCase>>(
+    admin || !selected ? base : null,
+    10000,
+  );
   const [older, setOlder] = useState<SupportCase[]>([]),
     [cursor, setCursor] = useState<number | string | null>(null),
     [loading, setLoading] = useState(false),
@@ -44,62 +48,156 @@ export function Tickets({
       setLoading(false);
     }
   }
-  if (selected)
-    return (
-      <TicketChat
-        key={base + selected}
-        userId={userId}
-        admin={admin}
-        caseId={selected}
-        onBack={() => onSelect(null)}
-      />
-    );
   const items = [...(list.value?.items ?? []), ...older].filter(
     (item, index, array) =>
       array.findIndex((other) => other.case_id === item.case_id) === index,
   );
+  const visibleItems = items.filter(
+    (item) => filter === "all" || item.state === filter,
+  );
   return (
-    <section>
-      <h1>{admin ? "Все тикеты" : "Мои тикеты"}</h1>
-      <button
-        onClick={() => {
-          setOlder([]);
-          setCursor(null);
-          list.reload();
-        }}
-      >
-        Обновить
-      </button>
-      {list.loading && !list.value && <p role="status">Загрузка тикетов…</p>}
-      {Boolean(list.error || error) && (
-        <p role="alert">{errorText(error ?? list.error)}</p>
+    <section
+      className={
+        admin
+          ? "queue-page" + (selected ? " has-selection" : "")
+          : "appeals-page"
+      }
+    >
+      {(!selected || admin) && (
+        <>
+          <PageHeading
+            title={admin ? "Очередь обращений" : "Мои обращения"}
+            description={
+              admin
+                ? "Рабочее пространство поддержки"
+                : "Ваша переписка с поддержкой"
+            }
+            icon={admin ? "headset" : "tickets"}
+          />
+        </>
       )}
-      {list.value && items.length === 0 && (
-        <p>
-          Созданных тикетов пока нет. Ожидающие подтверждения обращения
-          отображаются под ответом помощника.
-        </p>
-      )}
-      <ul className="ticket-list">
-        {items.map((item) => (
-          <li key={item.case_id}>
-            <button onClick={() => onSelect(item.case_id)}>
-              <strong>Тикет №{item.request_id}</strong> ·{" "}
-              {stateLabels[item.state]}
-              <small>
-                {item.created_at &&
-                  new Date(item.created_at).toLocaleString("ru-RU")}
-                {admin && " · пользователь " + item.user_id}
-              </small>
+      <div className={admin ? "queue-layout" : "appeals-layout"}>
+        <div
+          className={
+            selected && !admin
+              ? "appeal-sidebar mobile-hidden"
+              : "appeal-sidebar"
+          }
+        >
+          <div className="list-toolbar">
+            <div
+              className="filter-tabs"
+              role="group"
+              aria-label="Фильтр обращений"
+            >
+              {[
+                ["all", "Все"],
+                ["open", "Открытые"],
+                ["closed", "Закрытые"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  aria-pressed={filter === key}
+                  onClick={() => setFilter(key)}
+                >
+                  {label}
+                  <span>
+                    {
+                      items.filter(
+                        (item) => key === "all" || item.state === key,
+                      ).length
+                    }
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                setOlder([]);
+                setCursor(null);
+                list.reload();
+              }}
+            >
+              <Icon name="refresh" />
+              <span className="sr-only">Обновить</span>
             </button>
-          </li>
-        ))}
-      </ul>
-      {cursor !== "end" && (cursor || list.value?.next_cursor) && (
-        <button disabled={loading} onClick={() => void more()}>
-          Загрузить ещё
-        </button>
-      )}
+          </div>
+          {list.loading && !list.value && (
+            <p role="status">Загрузка обращений…</p>
+          )}
+          {Boolean(list.error || error) && (
+            <p role="alert">{errorText(error ?? list.error)}</p>
+          )}
+          {list.value && items.length === 0 && (
+            <p>
+              Созданных обращений пока нет. Ожидающие подтверждения обращения
+              отображаются под ответом помощника.
+            </p>
+          )}
+          {list.value && items.length > 0 && visibleItems.length === 0 && (
+            <p className="empty-state">В этом разделе обращений пока нет.</p>
+          )}
+          {list.value?.next_cursor && (
+            <p className="muted page-note">
+              Фильтры и счётчики учитывают загруженные обращения.
+            </p>
+          )}
+          <ul className="ticket-list">
+            {visibleItems.map((item) => (
+              <li key={item.case_id}>
+                <button
+                  className={
+                    selected === item.case_id
+                      ? "appeal-card selected"
+                      : "appeal-card"
+                  }
+                  onClick={() => onSelect(item.case_id)}
+                >
+                  <div className="appeal-meta">
+                    <span>№{item.request_id}</span>
+                    <time>
+                      {item.created_at &&
+                        new Date(item.created_at).toLocaleDateString("ru-RU")}
+                    </time>
+                  </div>
+                  <strong>Обращение №{item.request_id}</strong>
+                  <p>
+                    {admin
+                      ? "Пользователь " + item.user_id
+                      : "Переписка с оператором поддержки"}
+                  </p>
+                  <StatusBadge state={item.state} />
+                  <span className="card-chevron">
+                    <Icon name="chevron" />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {cursor !== "end" && (cursor || list.value?.next_cursor) && (
+            <button disabled={loading} onClick={() => void more()}>
+              Загрузить ещё
+            </button>
+          )}
+        </div>
+        {selected ? (
+          <TicketChat
+            key={base + selected}
+            userId={userId}
+            admin={admin}
+            caseId={selected}
+            onBack={() => onSelect(null)}
+          />
+        ) : (
+          admin && (
+            <div className="workspace-empty empty-state">
+              <Icon name="headset" size={36} />
+              <h2>Выберите обращение</h2>
+              <p>Контекст и переписка появятся здесь.</p>
+            </div>
+          )
+        )}
+      </div>
     </section>
   );
 }
@@ -130,6 +228,7 @@ function TicketChat({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<unknown>();
   async function send() {
+    if (busy || !text.trim()) return;
     const id = messageId ?? crypto.randomUUID();
     setMessageId(id);
     write(draftKey, { text, id });
@@ -165,6 +264,13 @@ function TicketChat({
     }
   }
   async function close() {
+    if (
+      busy ||
+      !window.confirm(
+        "Закрыть обращение? Отправка новых сообщений станет недоступна.",
+      )
+    )
+      return;
     setBusy(true);
     try {
       await post(base + "/close");
@@ -176,16 +282,24 @@ function TicketChat({
       setBusy(false);
     }
   }
+  const conversation = useRef<HTMLDivElement>(null);
+  const nearBottom = useRef(true);
   const ticket = resource.value;
+  useEffect(() => {
+    const el = conversation.current;
+    if (el && nearBottom.current) el.scrollTop = el.scrollHeight;
+  }, [ticket?.messages]);
   const messages = [...older, ...(ticket?.messages ?? [])].filter(
     (item, index, array) =>
       array.findIndex((other) => other.message_id === item.message_id) ===
       index,
   );
   return (
-    <section>
-      <button onClick={onBack}>← К списку тикетов</button>
-      <h1>Тикет {ticket ? "№" + ticket.case.request_id : ""}</h1>
+    <section className="ticket-workspace">
+      <button className="back-button" onClick={onBack}>
+        <Icon name="arrow" /> К списку обращений
+      </button>
+      <h1>Обращение {ticket ? "№" + ticket.case.request_id : ""}</h1>
       {Boolean(error || resource.error) && (
         <p role="alert">
           {errorText(error ?? resource.error)}{" "}
@@ -195,12 +309,20 @@ function TicketChat({
       {!ticket && resource.loading && <p role="status">Загрузка переписки…</p>}
       {ticket && (
         <>
-          <p>{stateLabels[ticket.case.state]}</p>
-          <details>
-            <summary>Исходный вопрос и ответ</summary>
+          <StatusBadge state={ticket.case.state} />
+          <details className="appeal-context">
+            <summary>
+              <Icon name="layers" /> Контекст вопроса и ответа
+              <small>
+                {ticket.history[0]?.question_text ??
+                  "Исходный вопрос и ответ помощника"}
+              </small>
+            </summary>
             {ticket.history.map((entry, index) => (
               <div key={index}>
-                <p className="user-message">{entry.question_text}</p>
+                <span className="label">Вопрос пользователя</span>
+                <p className="context-question">{entry.question_text}</p>
+                <span className="label">Ответ бота</span>
                 {entry.answer_text ? (
                   <Markdown text={entry.answer_text} />
                 ) : (
@@ -214,7 +336,17 @@ function TicketChat({
               Предыдущие сообщения
             </button>
           )}
-          <div className="conversation" aria-live="polite">
+          <div
+            className="conversation support-conversation"
+            ref={conversation}
+            onScroll={() => {
+              const el = conversation.current;
+              if (el)
+                nearBottom.current =
+                  el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            }}
+            aria-live="polite"
+          >
             {messages.length === 0 && <p>Сообщений пока нет.</p>}
             {messages.map((message) => (
               <article
@@ -236,9 +368,10 @@ function TicketChat({
             ))}
           </div>
           {ticket.case.state === "closed" ? (
-            <p>Тикет закрыт. Отправка новых сообщений недоступна.</p>
+            <p>Обращение закрыто. Отправка новых сообщений недоступна.</p>
           ) : (
             <form
+              className="composer support-composer"
               onSubmit={(event) => {
                 event.preventDefault();
                 void send();
@@ -251,6 +384,10 @@ function TicketChat({
                 id="ticket-message"
                 maxLength={4096}
                 required
+                placeholder={
+                  admin ? "Введите ответ пользователю…" : "Введите сообщение…"
+                }
+                rows={2}
                 value={text}
                 disabled={busy || Boolean(messageId)}
                 onChange={(event) => {
@@ -258,14 +395,15 @@ function TicketChat({
                   write(draftKey, { text: event.target.value, id: null });
                 }}
               />
-              <button disabled={busy || !text.trim()}>
+              <button className="primary" disabled={busy || !text.trim()}>
+                <Icon name="send" />
                 {messageId ? "Повторить отправку" : "Отправить"}
               </button>
             </form>
           )}
           {admin && ticket.case.state === "open" && (
             <button disabled={busy} onClick={() => void close()}>
-              Закрыть тикет
+              Закрыть обращение
             </button>
           )}
         </>
