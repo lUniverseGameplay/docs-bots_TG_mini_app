@@ -1,0 +1,25 @@
+# The host must resolve both public names to this server. Bind containers to
+# loopback as in compose.yaml; Caddy runs on the host and terminates HTTPS.
+mini.example.org {
+    request_body {
+        max_size 32KB
+    }
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle /sources/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8081
+    }
+}
+
+# Integrate this with the existing RAG API HTTPS host instead of adding a
+# duplicate site. Its /telegram/webhook and legacy routes keep the same paths.
+rag.example.org {
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy 127.0.0.1:8000
+}

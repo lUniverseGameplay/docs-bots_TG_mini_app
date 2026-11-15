@@ -1,0 +1,68 @@
+name: docs-mini-local
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${PGUSER:?Set PGUSER in docs-bots/.env}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Set PGPASSWORD in docs-bots/.env}
+      POSTGRES_DB: ${PGDATABASE:?Set PGDATABASE in docs-bots/.env}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  rabbitmq:
+    image: rabbitmq:4.1-alpine
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+    ports: ["127.0.0.1:5672:5672"]
+    volumes: [rabbitmq_data:/var/lib/rabbitmq]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  redis:
+    image: redis:7.4-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    ports: ["127.0.0.1:6333:6333"]
+    volumes: [qdrant_data:/qdrant/storage]
+  s3:
+    image: rustfs/rustfs:1.0.5
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+    ports: ["127.0.0.1:9000:9000"]
+    volumes: [s3_data:/data]
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:9000/health/ready]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  ollama:
+    profiles: [models]
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    ports: ["127.0.0.1:11434:11434"]
+    volumes: [ollama_data:/root/.ollama]
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  redis_data:
+  qdrant_data:
+  s3_data:
+  ollama_data:

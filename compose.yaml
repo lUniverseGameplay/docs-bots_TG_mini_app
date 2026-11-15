@@ -1,0 +1,19 @@
+name: docs-mini-app
+services:
+  mini-backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    networks: [rag]
+    ports: ["127.0.0.1:8080:8080"]
+    security_opt: ["no-new-privileges:true"]
+  mini-frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks: [rag]
+    ports: ["127.0.0.1:8081:80"]
+    security_opt: ["no-new-privileges:true"]
+networks:
+  rag:
+    external: true
+    name: ${RAG_DOCKER_NETWORK:-rag-shared}
