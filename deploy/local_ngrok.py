@@ -195,19 +195,19 @@ def main():
             url = urls[0].rstrip("/")
             state["url"] = url
             _save(state)
-            runtime.update(MINI_APP_URL=url, TELEGRAM_WEBHOOK_URL=url)
+            runtime.update(MINI_APP_URL=url, TELEGRAM_WEBHOOK_URL=url, TELEGRAM_UPDATE_MODE="polling")
             frontend_env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] = urlsplit(url).hostname
             # Backup once per launch before changing only the Mini App/webhook settings.
             backup = rag / "app/.tools" / f"env-before-ngrok-{time.time_ns()}.bak"
             backup.parent.mkdir(exist_ok=True)
             shutil.copy2(env_file, backup)
-            for key in ("MINI_APP_ENABLED", "MINI_APP_URL", "MINI_APP_ADMIN_IDS", "TELEGRAM_WEBHOOK_URL"):
+            for key in ("MINI_APP_ENABLED", "MINI_APP_URL", "MINI_APP_ADMIN_IDS", "TELEGRAM_WEBHOOK_URL", "TELEGRAM_UPDATE_MODE"):
                 set_key(str(env_file), key, runtime[key], quote_mode="auto")
             checks = [
                 ("migrate", [sys.executable, "-m", "rag.runtime", "migrate"]),
-                ("prepare", [sys.executable, "-m", "rag.runtime", "prepare"]),
             ]
             if args.with_models:
+                checks.append(("prepare", [sys.executable, "-m", "rag.runtime", "prepare"]))
                 checks.append(("models", [sys.executable, "-m", "rag.runtime", "check-models", "--role", "embedding", "--role", "generation", "--role", "injection"]))
             for name, command in checks:
                 print(f"Checking {name}...", flush=True)
@@ -232,7 +232,7 @@ def main():
             # Explicit bot configuration, without dropping pending updates or sending messages.
             token = values["TELEGRAM_BOT_TOKEN"]
             for method, body in (
-                ("setWebhook", {"url": url + "/telegram/webhook", "secret_token": values["TELEGRAM_WEBHOOK_SECRET"], "allowed_updates": ["message", "callback_query"], "drop_pending_updates": False}),
+                ("deleteWebhook", {"drop_pending_updates": False}),
                 ("setChatMenuButton", {"menu_button": {"type": "web_app", "text": "Открыть приложение", "web_app": {"url": url}}}),
             ):
                 try:
@@ -252,12 +252,17 @@ def main():
                     result = response.json()
                     data = result.get("result", {})
                     actual = data.get("url") if method == "getWebhookInfo" else data.get("web_app", {}).get("url")
-                    expected = url + "/telegram/webhook" if method == "getWebhookInfo" else url
+                    expected = "" if method == "getWebhookInfo" else url
                     ok = result.get("ok") is True and isinstance(actual, str) and actual.rstrip("/") == expected
                 except (httpx.HTTPError, ValueError):
                     ok = False
                 if not ok:
                     raise RuntimeError(f"Telegram {method} verification failed; local services remain running")
+            poller_env = {**runtime, "PYTHONPATH": os.pathsep.join((str(rag / "app"), str(rag)))}
+            poller = _spawn("telegram-poller", [sys.executable, "-m", "deploy.local_polling"], rag, poller_env, state)
+            time.sleep(2)
+            if poller.poll() is not None:
+                raise RuntimeError("Local Telegram poller exited; see telegram-poller.log")
             state["with_models"] = args.with_models
             _save(state)
             print(f"Ready: {url}\nLogs: {STATE}\nAdmin IDs: {admins}\nRAG generation: {'enabled' if args.with_models else 'disabled (local test without models)'}", flush=True)
